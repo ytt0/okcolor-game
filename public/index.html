@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+    <meta property="og:title" content="Okcolor game">
+    <meta property="og:description"  content="Okcolor game">
+    <meta property="og:site_name" content="Okcolor game">
+    <meta property="og:url" content="https://ytt0.github.io/okcolor-game">
+    <meta property="og:type" content="website">
+    <meta property="og:locale" content="en-us">
+    <meta property="og:image" content="https://ytt0.github.io/okcolor-game/images/logo-512.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta name="keywords" content="touch, game">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <meta name="msapplication-TileColor" content="black">
+    <meta name="theme-color" content="black">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon" sizes="180x180" href="images/logo-180.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="images/logo-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="images/logo-16.png">
+    <link rel="manifest" crossorigin="anonymous" href="app.webmanifest">
+    <link rel="mask-icon" href="images/logo-512.png">
+    <title>Okcolor game</title>
+    <script>
+        // elements
+        let oklabSwitch = null
+        let adjustSwitch = null
+        let directionSwitch = null
+        let leftHandedSwitch = null
+        let fullscreenSwitch = null
+        let offsetInput = null
+        let brightnessInput = null
+        let scaleInput = null
+        let shiftInput = null
+        let marginInput = null
+        let overlaySwitch = null
+        let settingsContainer = null
+        let helpContainer = null
+        let oklabContainer = null
+
+        // settings
+        let oklabSpace = true
+        let autoAdjust = true
+        let pickerHueDirection = true
+        let pickerHueOffset = 0.0
+        let pickerBrightness = 1.0
+        let leftHanded = false
+        let layoutScale = 1.0
+        let layoutShift = 0
+        let fullscreenEnabled = false
+        let fullscreenBottomMargin = 50
+        let overlayVisible = true
+
+        let touchStartPosition = null
+
+        function tryParseBool(value, defaultValue) {
+            return value != null && value != undefined ? value.toLowerCase() == "true" : defaultValue
+        }
+
+        function tryParseInt(value, defaultValue) {
+            const result = parseInt(value)
+            return isNaN(result) ? defaultValue : result
+        }
+
+        function tryParseFloat(value, defaultValue) {
+            const result = parseFloat(value)
+            return isNaN(result) ? defaultValue : result
+        }
+
+        function setCookie(key, value) {
+            key = encodeURIComponent(key)
+            value = encodeURIComponent(value)
+            document.cookie = key + "=" + value + "; SameSite=Strict; max-age=1000000000"
+        }
+
+        function getCookie(key) {
+            key = encodeURIComponent(key) + "="
+            const value = document.cookie.split("; ").find((row) => row.startsWith(key))?.split("=")[1]
+            return value != undefined ? decodeURIComponent(value) : undefined
+        }
+
+        function getAllCookies() {
+            const result = []
+            const keyValues = document.cookie.split("; ")
+
+            for (let i = 0; i < keyValues.length; i++) {
+                const key = decodeURIComponent(keyValues[i].split("=")[0])
+                const value = decodeURIComponent(keyValues[i].split("=")[1] || "")
+
+                result.push({ key: key, value: value })
+            }
+
+            return result
+        }
+
+        function clearCookies() {
+            const keyValues = document.cookie.split("; ")
+            for (let i = 0; i < keyValues.length; i++) {
+                const key = decodeURIComponent(keyValues[i].split("=")[0])
+                document.cookie = key + "=; SameSite=Strict; max-age=0"
+            }
+        }
+
+        function tryParseInt(value, defaultValue) {
+            const result = parseInt(value)
+            return isNaN(result) ? defaultValue : result
+        }
+
+        function tryParseFloat(value, defaultValue) {
+            const result = parseFloat(value)
+            return isNaN(result) ? defaultValue : result
+        }
+
+        function validateSettings() {
+            pickerBrightness = Math.min(4.0, Math.max(0.0, pickerBrightness))
+            layoutScale = Math.max(layoutScale, 0.1)
+        }
+
+        function setElementsValues() {
+            oklabSwitch.setValue(oklabSpace)
+            adjustSwitch.setValue(autoAdjust)
+            directionSwitch.setValue(pickerHueDirection)
+            leftHandedSwitch.setValue(!leftHanded)
+            fullscreenSwitch.setValue(fullscreenEnabled)
+            overlaySwitch.setValue(overlayVisible)
+
+            offsetInput.value = Math.floor(pickerHueOffset * 360.0)
+            brightnessInput.value = pickerBrightness
+            scaleInput.value = layoutScale
+            shiftInput.value = layoutShift
+            marginInput.value = fullscreenBottomMargin
+        }
+
+        function readSettings() {
+            oklabSpace = tryParseBool(getCookie("oklab"), true)
+            autoAdjust = tryParseBool(getCookie("adjust"), true)
+            pickerHueDirection = tryParseBool(getCookie("clockwise"), true)
+            pickerHueOffset = tryParseFloat(getCookie("offset"), 0.0)
+            pickerBrightness = tryParseFloat(getCookie("brightness"), 1.0)
+            leftHanded = tryParseBool(getCookie("left"), false)
+            layoutScale = tryParseFloat(getCookie("scale"), 1.0)
+            layoutShift = tryParseInt(getCookie("shift"), 0)
+            fullscreenEnabled = tryParseBool(getCookie("fullscreen"), false)
+            fullscreenBottomMargin = tryParseInt(getCookie("margin"), 50)
+            overlayVisible = tryParseBool(getCookie("overlay"), true)
+
+            validateSettings()
+
+            setElementsValues()
+        }
+
+        function writeSettings() {
+            oklabSpace = oklabSwitch.value
+            autoAdjust = adjustSwitch.value
+            pickerHueDirection = directionSwitch.value
+            pickerHueOffset = (tryParseFloat(offsetInput.value, 0.0) / 360.0).toFixed(2)
+            pickerBrightness = tryParseFloat(brightnessInput.value, 1.0)
+            leftHanded = !leftHandedSwitch.value
+            layoutScale = tryParseFloat(scaleInput.value, 1.0)
+            layoutShift = tryParseInt(shiftInput.value, 0)
+            fullscreenEnabled = fullscreenSwitch.value
+            fullscreenBottomMargin = tryParseInt(marginInput.value, 50)
+            overlayVisible = overlaySwitch.value
+
+            validateSettings()
+
+            setCookie("oklab", oklabSpace)
+            setCookie("adjust", autoAdjust)
+            setCookie("clockwise", pickerHueDirection)
+            setCookie("offset", pickerHueOffset)
+            setCookie("brightness", pickerBrightness)
+            setCookie("left", leftHanded)
+            setCookie("scale", layoutScale)
+            setCookie("shift", layoutShift)
+            setCookie("fullscreen", fullscreenEnabled)
+            setCookie("margin", fullscreenBottomMargin)
+            setCookie("overlay", overlayVisible)
+        }
+
+        function resetSettings() {
+            oklabSpace = true
+            autoAdjust = true
+            pickerHueDirection = true
+            pickerHueOffset = 0.0
+            pickerBrightness = 1.0
+            leftHanded = false
+            layoutScale = 1.0
+            layoutShift = 0
+            fullscreenEnabled = false
+            fullscreenBottomMargin = 50
+            overlayVisible = true
+        }
+
+        function mouseDown(e) {
+            touchStartPosition = null
+        }
+
+        function touchStart(e) {
+            touchStartPosition = { x: e.touches[0].pageX, y: e.touches[0].pageY }
+        }
+
+        function isTouchDrag(e) {
+            return touchStartPosition != null && e.touches != null && (Math.abs(e.touches[0].pageX - touchStartPosition.x) > 10 || Math.abs(e.touches[0].pageY - touchStartPosition.y) > 10)
+        }
+
+        function startClicked(e) {
+            if (isTouchDrag(e)) {
+                return
+            }
+
+            writeSettings()
+
+            let params = ""
+
+            if (!oklabSpace) {
+                params += ",oklab=" + oklabSpace
+            }
+
+            if (!autoAdjust) {
+                params += ",adjust=" + autoAdjust
+            }
+
+            if (!pickerHueDirection) {
+                params += ",clockwise=" + pickerHueDirection
+            }
+
+            if (pickerHueOffset != 0.0) {
+                params += ",offset=" + pickerHueOffset
+            }
+
+            if (pickerBrightness != 1.0) {
+                params += ",brightness=" + pickerBrightness
+            }
+
+            if (leftHanded) {
+                params += ",left=" + leftHanded
+            }
+
+            if (layoutScale != 1.0) {
+                params += ",scale=" + layoutScale
+            }
+
+            if (layoutShift != 0) {
+                params += ",shift=" + layoutShift
+            }
+
+            if (fullscreenEnabled) {
+                params += ",fullscreen=" + fullscreenEnabled
+            }
+
+            if (fullscreenBottomMargin != 50) {
+                params += ",margin=" + fullscreenBottomMargin
+            }
+
+            if (!overlayVisible) {
+                params += ",overlay=" + overlayVisible
+            }
+
+            window.location.href = params == "" ? "game.html" : ("game.html#" + params.substring(1))
+
+            e.preventDefault()
+        }
+
+        function resetClicked(e) {
+            if (isTouchDrag(e)) {
+                return
+            }
+
+            clearCookies()
+            resetSettings()
+            setElementsValues()
+
+            e.preventDefault()
+        }
+
+        function settingsClicked(e) {
+            if (isTouchDrag(e)) {
+                return
+            }
+
+            settingsContainer.hidden = !settingsContainer.hidden
+
+            e.preventDefault()
+        }
+
+        function helpClicked(e) {
+            if (isTouchDrag(e)) {
+                return
+            }
+
+            helpContainer.hidden = !helpContainer.hidden
+
+            e.preventDefault()
+        }
+
+        function initializeSwitch(element, onValueChanged) {
+            const uncheckElement = element.children[0]
+            const checkElement = element.children[1]
+
+            element.setValue = function (value) {
+                element.value = value
+
+                if (value) {
+                    uncheckElement.classList.remove("selected")
+                    checkElement.classList.add("selected")
+                }
+                else {
+                    uncheckElement.classList.add("selected")
+                    checkElement.classList.remove("selected")
+                }
+
+                if (onValueChanged != null) {
+                    onValueChanged(value)
+                }
+            }
+
+            const uncheckClicked = function () {
+                element.setValue(false)
+            }
+
+            const checkClicked = function () {
+                element.setValue(true)
+            }
+
+            uncheckElement.addEventListener("click", uncheckClicked)
+            uncheckElement.addEventListener("touchend", uncheckClicked)
+            checkElement.addEventListener("click", checkClicked)
+            checkElement.addEventListener("touchend", checkClicked)
+        }
+
+        window.onload = function() {
+
+            oklabSwitch = document.getElementById("oklabSwitch")
+            adjustSwitch = document.getElementById("adjustSwitch")
+            directionSwitch = document.getElementById("directionSwitch")
+            leftHandedSwitch = document.getElementById("leftHandedSwitch")
+            fullscreenSwitch = document.getElementById("fullscreenSwitch")
+            offsetInput = document.getElementById("offsetInput")
+            brightnessInput = document.getElementById("brightnessInput")
+            scaleInput = document.getElementById("scaleInput")
+            shiftInput = document.getElementById("shiftInput")
+            marginInput = document.getElementById("marginInput")
+            overlaySwitch = document.getElementById("overlaySwitch")
+            settingsContainer = document.getElementById("settingsContainer")
+            helpContainer = document.getElementById("helpContainer")
+            oklabContainer = document.getElementById("oklabContainer")
+
+            initializeSwitch(oklabSwitch, function (value) { oklabContainer.hidden = !value })
+            initializeSwitch(adjustSwitch, null)
+            initializeSwitch(directionSwitch, null)
+            initializeSwitch(leftHandedSwitch, null)
+            initializeSwitch(fullscreenSwitch, null)
+            initializeSwitch(overlaySwitch, null)
+
+            document.body.addEventListener("mousedown", mouseDown)
+            document.body.addEventListener("touchstart", touchStart)
+
+            const startButton = document.getElementById("startButton")
+            startButton.addEventListener("click", startClicked)
+            startButton.addEventListener("touchend", startClicked)
+
+            const resetButton = document.getElementById("resetButton")
+            resetButton.addEventListener("click", resetClicked)
+            resetButton.addEventListener("touchend", resetClicked)
+
+            const settingsButton = document.getElementById("settingsButton")
+            settingsButton.addEventListener("click", settingsClicked)
+            settingsButton.addEventListener("touchend", settingsClicked)
+
+            const helpButton = document.getElementById("helpButton")
+            helpButton.addEventListener("click", helpClicked)
+            helpButton.addEventListener("touchend", helpClicked)
+
+            readSettings()
+
+            document.body.style.visibility = "visible"
+        }
+    </script>
+    <style>
+        .textInput {
+            background: black;
+            border: 1.5px solid #888;
+            color: white;
+            font-size: 1em;
+            text-align: center;
+            border-color: #58f;
+            border-radius: 30px;
+            padding: 8px;
+            width: 200px;
+        }
+
+        .textInput::selection {
+            color: white;
+            background-color: #58f;
+        }
+
+        .textInput:focus{
+            outline: none;
+            border-color: #fff;
+        }
+
+        .button {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .textButton {
+            margin: auto;
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+            background: transparent;
+            user-select: none;
+        }
+
+        .switchButton {
+            position: absolute;
+            cursor: default;
+            user-select: none;
+            width: 220px;
+            height: 34px;
+            margin-left: -110px;
+            left: 50%;
+            line-height: 34px;
+            border: 1.5px solid #58f;
+            border-radius: 30px;
+            margin-top: 15px;
+            margin-bottom: 15px;
+            font-size: 0.9em;
+            text-align: center;
+        }
+
+        .switchUnchecked {
+            position: absolute;
+            width: 50%;
+            height: 100%;
+            border-radius: 30px;
+        }
+
+        .switchUnchecked.selected {
+            background: #24a;
+        }
+        .switchUnchecked.selected.disabled {
+            background: #333;
+        }
+
+        .switchChecked {
+            position: absolute;
+            left: 50%;
+            width: 50%;
+            height: 100%;
+            border-radius: 30px;
+            background: black;
+        }
+
+        .switchChecked.selected {
+            background: #24a;
+        }
+
+        a {
+            color: #888;
+            text-decoration: none;
+        }
+
+        h1 {
+            padding-top: 40px;
+            padding-bottom: 40px;
+        }
+
+        h3 {
+            margin-top: 40px;
+        }
+
+        h4 {
+            color: #58f;
+        }
+
+        h5 {
+            color: #8df;
+            font-weight: bold;
+            font-size: medium;
+            margin-bottom: 0;
+        }
+
+        li {
+            text-align: left;
+        }
+
+        .highlight {
+            color: #ff8;
+            font-weight: bold;
+        }
+
+        .comment {
+            font-style: italic;
+            opacity: 0.5;
+            font-size: 0.9em;
+        }
+
+        .difficulty {
+            font-style: italic;
+            opacity: 0.5;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body style="background: black; color: white; font-family: sans-serif; text-align: center; -webkit-tap-highlight-color: transparent; visibility: hidden;">
+    <br/>
+    <span id="startButton" class="button">
+    <div style="position: relative; width: 50%; left: 25%; padding-top: 80px;">
+        <img src="images/logo-512.png" style="position: relative; width: 100%; height: 100%; max-width: 256px; pointer-events: none;"></img>
+    </div>
+    <h1>Start</h1>
+    </span>
+    <h3 id="settingsButton" class="button" style="cursor: pointer;">Settings</h3>
+    <span id="settingsContainer" hidden="true">
+        <h4>Color Picker</h4>
+        Color space
+        <br/>
+        <div style="height: 50px; width: 0; margin-bottom: 15px; margin-left: 50%;">
+            <div id="oklabSwitch" class="switchButton">
+                <div class="switchUnchecked">HSV</div>
+                <div class="switchChecked">Oklab</div>
+            </div>
+        </div>
+        <br/>
+        <span id="oklabContainer" hidden="true">
+            Auto adjust
+            <br/>
+            <div style="height: 50px; width: 0; margin-bottom: 15px; margin-left: 50%;">
+                <div id="adjustSwitch" class="switchButton">
+                    <div class="switchUnchecked disabled">Disable</div>
+                    <div class="switchChecked">Enable</div>
+                </div>
+            </div>
+            <span class="comment">(adjust perceived saturation and<br/>value on hue change)</span>
+            <br/>
+            <br/>
+            <br/>
+        </span>
+        Direction
+        <br/>
+        <div style="height: 50px; width: 0; margin-bottom: 15px; margin-left: 50%;">
+            <div id="directionSwitch" class="switchButton">
+                <div class="switchUnchecked">Counter</div>
+                <div class="switchChecked">Clockwise</div>
+            </div>
+        </div>
+        <br/>
+        Rotation
+        <br/>
+        <input id="offsetInput" class="textInput" inputmode="decimal" value="0" style="margin-top: 15px; margin-bottom: 15px"></input>
+        <br/>
+        <span class="comment">(degrees)</span>
+        <br/>
+        <br/>
+        Brightness
+        <br/>
+        <input id="brightnessInput" class="textInput" inputmode="decimal" value="0" style="margin-top: 15px; margin-bottom: 15px"></input>
+        <br/>
+        <span class="comment">(0 fully dimmed)</span>
+        <br/>
+        <span class="comment">(1 fully bright)</span>
+        <br/>
+        <br/>
+        Landscape position
+        <br/>
+        <div style="height: 50px; width: 0; margin-bottom: 15px; margin-left: 50%;">
+            <div id="leftHandedSwitch" class="switchButton">
+                <div class="switchUnchecked">Left</div>
+                <div class="switchChecked">Right</div>
+            </div>
+        </div>
+        <br/>
+        <h4>Layout</h4>
+        Scale
+        <br/>
+        <input id="scaleInput" class="textInput" inputmode="decimal" value="1" style="margin-top: 15px; margin-bottom: 15px"></input>
+        <br/>
+        Shift
+        <br/>
+        <input id="shiftInput" class="textInput" inputmode="decimal" value="0" style="margin-top: 15px; margin-bottom: 15px"></input>
+        <br/>
+        <span class="comment">(move every 5 seconds)</span>
+        <br/>
+        <br/>
+        Full screen button
+        <br/>
+        <div style="height: 50px; width: 0; margin-bottom: 15px; margin-left: 50%;">
+            <div id="fullscreenSwitch" class="switchButton">
+                <div class="switchUnchecked disabled">Disable</div>
+                <div class="switchChecked">Enable</div>
+            </div>
+        </div>
+        Full screen lower margin
+        <br/>
+        <input id="marginInput" class="textInput" inputmode="decimal" value="0" style="margin-top: 15px; margin-bottom: 15px"></input>
+        <br/>
+        <span class="comment">(mobile navigation bar height)</span>
+        <br/>
+        <br/>
+        Overlay elements visibility
+        <br/>
+        <div style="height: 50px; width: 0; margin-bottom: 15px; margin-left: 50%;">
+            <div id="overlaySwitch" class="switchButton">
+                <div class="switchUnchecked disabled">Hidden</div>
+                <div class="switchChecked">Visible</div>
+            </div>
+        </div>
+        <br/>
+        <br/>
+        <span id="resetButton" class="button">Reset settings</span>
+        <br/>
+        <br/>
+        <br/>
+    </span>
+    <h3 id="helpButton" class="button" style="cursor: pointer;">Help</h3>
+    <div id="helpContainer" style="width: 150px; margin-left:50%; margin-right:50%;" hidden="true">
+        <div style="margin-left: -150px;">
+            <h4>Gameplay</h4>
+            A small game for practicing color perception and memorization. The game difficulty level can be adjusted by combining the following modes:
+            </br>
+            <h5>Challenge components</h5>
+            <span class="comment">(top left menu)</span>
+            <br/>
+            <br/>
+            <li><span class="highlight">1 component</span> <span class="difficulty">(easy)</span> - Match only one of Hue, Saturation, or Value.</li>
+            <li><span class="highlight">2 components</span> <span class="difficulty">(medium)</span> - Match a pair of Hue, Saturation, and Value.</li>
+            <li><span class="highlight">3 components</span> <span class="difficulty">(hard)</span> - Match a full color.</li>
+            <h5>Challenge type</h5>
+            <span class="comment">(top left menu)</span>
+            <br/>
+            <br/>
+            <li><span class="highlight">Match</span> <span class="difficulty">(easy)</span> - Match a single color.</li>
+            <li><span class="highlight">Pair</span> <span class="difficulty">(medium)</span> - Match a pair of colors.</li>
+            <li><span class="highlight">Mix</span> <span class="difficulty">(hard)</span> - Match an average of two colors.</li>
+            <li><span class="highlight">Combine</span> <span class="difficulty">(hard)</span> - Match a combination of components from two colors (for example, match a color that has the Hue and Saturation of the first color, and the Value of the second color).</li>
+            <li><span class="highlight">Match different</span> <span class="difficulty">(medium..hard)</span> - Match a similar color, with different components (for example, match a color with the same Hue and Saturation, but with different Value).</li>
+            <h5>Color Depth</h5>
+            <span class="comment">(top right menu)</span>
+            <br/>
+            <br/>
+            <li><span class="highlight">Full</span> <span class="difficulty">(hard)</span> - a continuous color gradient.</li>
+            <li><span class="highlight">x2..x16</span> <span class="difficulty">(easy..medium)</span> - a fixed number of colors.</li>
+            </span>
+            <h5>Color Visibility</h5>
+            <span class="comment">(top right button)</span>
+            <br/>
+            <br/>
+            <li><span class="difficulty">(easy/hard)</span> Toggle the challenge colors visibility, to show/hide the challenge colors after a color has been picked.</li>
+            <li><span class="difficulty">(hard)</span> When challenge color visibility is turned off, try memorizing the challenge color, then pick a color from the opposite direction (much darker or much lighter), and <i>slowly</i> adjust it to match the memorized color.</li>
+            <h4>Mobile guestures</h4>
+            <li>Before a color has been picked, <span class="highlight">tap</span> the challenge colors area, to randomize a new challenge colors.</li>
+            <li>After a color has been picked, <span class="highlight">tap</span> the challenge colors area, to submit the selected color, and see the results.</li>
+            <h4>Desktop shortcuts</h4>
+            <li>Before a color has been picked, <span class="highlight">left click</span> the challenge colors area, <span class="highlight">right click</span> anywhere, or press <span class="highlight">space</span>, to randomize a new challenge colors.</li>
+            <li>After a color has been picked, <span class="highlight">left click</span> the challenge colors area, <span class="highlight">right click</span> anywhere, or press <span class="highlight">space</span>, to submit the selected color, and see the results.</li>
+            <h4>Mobile app mode</h4>
+            <li>Tap <span class="highlight" style="border: 1px solid #ff8; padding: 2px 10px 2px 10px; border-radius: 4px;">&vellip;</span> to open the browser menu for this page.</li>
+            <li>Select "<span class="highlight">Add to Home screen</span>" or "<span class="highlight">Install app</span>" to add as a single page application.</li>
+        </div>
+    </div>
+    <br/>
+    <a href="https://github.com/ytt0/okcolor-game">GitHub</a>
+    <br/>
+    <br/>
+</body>
+</html>

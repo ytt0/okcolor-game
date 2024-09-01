@@ -1,0 +1,2187 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <meta name="msapplication-TileColor" content="black">
+    <meta name="theme-color" content="black">
+    <link rel="apple-touch-icon" sizes="180x180" href="images/logo-180.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="images/logo-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="images/logo-16.png">
+    <link rel="mask-icon" href="images/logo-512.png">
+    <title>Okcolor game</title>
+    <script src="colorconversion.js"></script>
+    <script>
+        const pickerHueThickness = 0.15
+        const pickerPivotPosition = 0.68
+
+        const pickerSVArea = 1.0 - 2.0 * pickerHueThickness
+        const pickerPivotRadius = Math.max(0.0, 1.0 - pickerHueThickness - pickerPivotPosition)
+        const pickerEdgeLength = Math.max(0.0, pickerPivotPosition * 2.0)
+        const pickerCornerLength = pickerPivotRadius * Math.PI / 2.0
+        const pickerSegmentLength = pickerEdgeLength + pickerCornerLength
+
+        const pickerHCanvasSize = 500
+        const pickerSVCanvasSizeSmooth = 10 // colorDepth == 0
+        const pickerInputCanvasSize = 200
+
+        const challengeMinS = 0.3
+        const challengeMinV = 0.3
+        const challengeOffsetH = 0.3
+        const challengeOffsetS = 0.3
+        const challengeOffsetV = 0.3
+        const layoutShiftInterval = 5000
+        const layoutDefaultScale = 300
+
+        // elements
+        let rootContainer = null
+        let rootOffsetContainer = null
+        let challengeContainer = null
+        let challengeElements = []
+        let challengeLabels = []
+        let targetElement = null
+        let targetLabel = null
+        let selectionElements = []
+        let resultLabel = null
+        let resultLabel1 = null
+        let resultLabel2 = null
+        let starsImage = null
+        let reloadButton = null
+        let reloadImage = null
+        let challengeVisibilityButton = null
+        let challengeVisibleImage = null
+        let challengeHiddenImage = null
+        let fullscreenButton = null
+        let fullscreenEnterImage = null
+        let fullscreenLeaveImage = null
+        let submitButton = null
+        let submitImage = null
+        let challengeButton = null
+        let depthButton = null
+        let pickerContainer = null
+        let pickerHCanvas = null
+        let pickerSVCanvasSmooth = null
+        let pickerSVCanvasPixelated = null
+        let selectionHCursors = []
+        let selectionSVCursors = []
+        let targetHCursors = []
+        let targetSVCursors = []
+        let value1Header = null
+        let value2Header = null
+
+        // parameters
+        let layoutScale = 1
+        let isChallengeAutoHide = false
+        let isLeftHanded = false
+        let layoutShiftRadius = 0
+        let pickerBrightness = 1.0 // picker dimming
+        let pickerHueDirection = 1.0 // 1 or -1
+        let pickerHueOffset = 0.0 // 0..1
+        let isFullscreenEnabled = false
+        let fullscreenBottomMargin = 0
+        let colorDepth = 0
+        let overlayOpacity = 1.0
+        let oklabSpace = true
+        let autoAdjust = true
+
+        // layout state
+        let isLoaded = false
+        let rootContainerScale = 1
+        let pickerCanvasScale = 1
+        let pickerCanvasPosition = { x: 0, y: 0 }
+        let pickerDragOffset = { x: 0, y: 0 }
+
+        let visualizeInputArea = false // debug input area
+        let visualizeInputAreaImprecise = false // debug touch input area
+
+        let pickerSVCanvasSize = 1
+        let pickerSVCanvas = null
+        let lastTouch = 0
+        let layoutShift = 0
+        let layoutShiftTime = 0
+        let layoutOffset = { x: 0, y: 0 }
+        let isAnimationFrameRequested = false
+        let isPickerHCanvasValid = false
+        let isPickerSVCanvasValid = false
+        let pickerCapture = null
+
+        // challenge state
+        let state = null
+        let isStarted = false
+        let isSubmitted = false
+        let isSelectionVisible = false
+        let isChallengeVisible = false
+        let pickerLock = {}
+        let targets = {}
+        let selections = {}
+        let activeSelection = {}
+        let activeSelectionIndex = 0
+        let activatedSelectionsCount = 0
+        let initialActiveSelection = {}
+        let adjustSelection = true
+
+        let challenges = [
+            {
+                group: "1 Component",
+                header: "Match Hue",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, true)
+                    const value = randomNextChallengeColor(pickerLock)
+
+                    return {
+                        values: [ value ],
+                        headers: [ "Hue" ],
+                        selections: [ snapColorDepth(hsv(0.0, value.s, value.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match Saturation",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, true)
+                    const value = randomNextChallengeColor(pickerLock)
+
+                    return {
+                        values: [ value ],
+                        headers: [ "Saturation" ],
+                        selections: [ snapColorDepth(hsv(value.h, 1.0, value.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match Value",
+
+                createState: function () {
+                    const pickerLock = hsv(true, true, false)
+                    const value = randomNextChallengeColor(pickerLock)
+
+                    return {
+                        values: [ value ],
+                        headers: [ "Value" ],
+                        selections: [ snapColorDepth(hsv(value.h, value.s, 0.8)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match Hue Pair",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, true)
+                    const values = randomNextChallengeColorPair(pickerLock)
+
+                    return {
+                        values: values,
+                        headers: [ "Hue 1", "Hue 2" ],
+                        selections: [ snapColorDepth(hsv(0.4, values[0].s, values[0].v)), snapColorDepth(hsv(0.6, values[0].s, values[0].v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match Saturation Pair",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock)
+
+                    return {
+                        values: values,
+                        headers: [ "S 1", "S 2" ],
+                        selections: [ snapColorDepth(hsv(values[0].h, 0.4, values[0].v)), snapColorDepth(hsv(values[0].h, 0.6, values[0].v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match Value Pair",
+
+                createState: function () {
+                    const pickerLock = hsv(true, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock)
+
+                    return {
+                        values: values,
+                        headers: [ "Value 1", "Value 2" ],
+                        selections: [ snapColorDepth(hsv(values[0].h, values[0].s, 0.8)), snapColorDepth(hsv(values[0].h, values[0].s, 0.6)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Mix Hue",
+                createState: function () {
+                    const pickerLock = hsv(false, true, true)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = snapColorDepth(mixColors(values[0], values[1]))
+
+                    return {
+                        values: values,
+                        headers: [ "Hue 1", "Hue 2" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, target.s, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Mix Saturation",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = snapColorDepth(mixColors(values[0], values[1]))
+
+                    return {
+                        values: values,
+                        headers: [ "S 1", "S 2" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, 1.0, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Mix Value",
+
+                createState: function () {
+                    const pickerLock = hsv(true, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = snapColorDepth(mixColors(values[0], values[1]))
+
+                    return {
+                        values: values,
+                        headers: [ "Value 1", "Value 2" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, target.s, 1.0)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match H different S",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, true)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(true, false, true))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Hue" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, target.s, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match H different V",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, true)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(true, true, false))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Hue" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, target.s, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match H different SV",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, true)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(true, false, false))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Hue" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, target.s, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match S different H",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(false, true, true))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Saturation" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, 0.5, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match S different V",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(true, true, false))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Saturation" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, 0.5, target.v)) ],
+                        pickerLock: hsv(true, false, true)
+                    }
+                }
+            },
+            {
+                header: "Match S different HV",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(false, true, false))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Saturation" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, 0.5, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match V different H",
+
+                createState: function () {
+                    const pickerLock = hsv(true, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(false, true, true))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Value" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, target.s, 0.8)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match V different S",
+
+                createState: function () {
+                    const pickerLock = hsv(true, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(true, false, true))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Value" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, target.s, 0.8)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match V different HS",
+
+                createState: function () {
+                    const pickerLock = hsv(true, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(false, false, true))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "Value" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, target.s, 0.8)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                group: "2 Components",
+                header: "Match HS",
+
+                createState: function () {
+                    const pickerLock = hsv(false, false, true)
+                    const value = randomNextChallengeColor(pickerLock)
+
+                    return {
+                        values: [ value ],
+                        headers: [ "HS" ],
+                        selections: [ snapColorDepth(hsv(0.0, 0.5, value.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match HV",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, false)
+                    const value = randomNextChallengeColor(pickerLock)
+
+                    return {
+                        values: [ value ],
+                        headers: [ "HV" ],
+                        selections: [ snapColorDepth(hsv(0.0, value.s, 1.0)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match SV",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, false)
+                    const value = randomNextChallengeColor(pickerLock)
+
+                    return {
+                        values: [ value ],
+                        headers: [ "SV" ],
+                        selections: [ snapColorDepth(hsv(value.h, 0.0, 1.0)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match HS Pair",
+
+                createState: function () {
+                    const pickerLock = hsv(false, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock)
+
+                    return {
+                        values: values,
+                        headers: [ "HS 1", "HS 2" ],
+                        selections: [ snapColorDepth(hsv(0.0, 0.4, values[0].v)), snapColorDepth(hsv(0.2, 0.6, values[0].v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match HV Pair",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock)
+
+                    return {
+                        values: values,
+                        headers: [ "HV 1", "HV 2" ],
+                        selections: [ snapColorDepth(hsv(0.0, values[0].s, 0.8)), snapColorDepth(hsv(0.2, values[0].s, 0.6)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match SV Pair",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, false)
+                    const values = randomNextChallengeColorPair(pickerLock)
+
+                    return {
+                        values: values,
+                        headers: [ "SV 1", "SV 2" ],
+                        selections: [ snapColorDepth(hsv(values[0].h, 0.0, 0.8)), snapColorDepth(hsv(values[0].h, 0.2, 0.6)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Mix HS",
+
+                createState: function () {
+                    const pickerLock = hsv(false, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = snapColorDepth(mixColors(values[0], values[1]))
+
+                    return {
+                        values: values,
+                        headers: [ "HS 1", "HS 2" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, 1.0, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Mix HV",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = snapColorDepth(mixColors(values[0], values[1]))
+
+                    return {
+                        values: values,
+                        headers: [ "HV 1", "HV 2" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, target.s, 1.0)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Mix SV",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, false)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = snapColorDepth(mixColors(values[0], values[1]))
+
+                    return {
+                        values: values,
+                        headers: [ "SV 1", "SV 2" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, 1.0, 1.0)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Combine H and S",
+
+                createState: function () {
+                    const pickerLock = hsv(false, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = hsv(values[0].h, replaceHue(values[1], values[0].h).s, values[0].v)
+
+                    return {
+                        values: values,
+                        headers: [ "H", "S" ],
+                        target: snapColorDepth(target),
+                        selections: [ snapColorDepth(hsv(0.0, 1.0, 1.0)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Combine H and V",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = hsv(values[0].h, values[0].s, replaceHue(values[1], values[0].h).v)
+
+                    return {
+                        values: values,
+                        headers: [ "H", "V" ],
+                        target: snapColorDepth(target),
+                        selections: [ snapColorDepth(hsv(0.0, 1.0, 1.0)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Combine S and V",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, false)
+                    const values = randomNextChallengeColorPair(pickerLock)
+                    const target = hsv(values[0].h, values[0].s, replaceHue(values[1], values[0].h).v)
+
+                    return {
+                        values: values,
+                        headers: [ "S", "V" ],
+                        target: snapColorDepth(target),
+                        selections: [ snapColorDepth(hsv(values[0].h, 0.5, 1.0)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match HS different V",
+
+                createState: function () {
+                    const pickerLock = hsv(false, false, true)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(true, true, false))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "HS" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, 0.5, target.v)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match HV different S",
+
+                createState: function () {
+                    const pickerLock = hsv(false, true, false)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(true, false, true))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "HV" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, target.s, 0.8)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+            {
+                header: "Match SV different H",
+
+                createState: function () {
+                    const pickerLock = hsv(true, false, false)
+                    const values = randomNextChallengeColorPair(pickerLock, hsv(false, true, true))
+                    const target = values[1]
+
+                    return {
+                        values: [ values[0] ],
+                        headers: [ "SV" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(target.h, 0.5, 0.8)) ],
+                        pickerLock: pickerLock
+                    }
+                }
+            },
+
+
+            {
+                isDefault: true,
+                group: "3 Components",
+                header: "Match Color",
+
+                createState: function () {
+                    const value = randomNextChallengeColor(hsv(false, false, false))
+
+                    return {
+                        values: [ value ],
+                        headers: [ "Color" ],
+                        selections: [ snapColorDepth(hsv(0.0, 0.5, 0.8)) ],
+                    }
+                }
+            },
+            {
+                isDefault: true,
+                header: "Match Color Pair",
+
+                createState: function () {
+                    const values = randomNextChallengeColorPair(hsv(false, false, false))
+
+                    return {
+                        values: values,
+                        headers: [ "Color 1", "Color 2" ],
+                        selections: [ snapColorDepth(hsv(0.0, 0.4, 0.8)), snapColorDepth(hsv(0.2, 0.6, 0.6)) ],
+                    }
+                }
+            },
+            {
+                header: "Mix Color",
+
+                createState: function () {
+                    const values = randomNextChallengeColorPair(hsv(false, false, false))
+                    const target = snapColorDepth(mixColors(values[0], values[1]))
+
+                    return {
+                        values: values,
+                        headers: [ "Color 1", "Color 2" ],
+                        target: target,
+                        selections: [ snapColorDepth(hsv(0.0, 0.5, 0.8)) ],
+                    }
+                }
+            },
+            {
+                header: "Combine H and SV",
+
+                createState: function () {
+                    const values = randomNextChallengeColorPair(hsv(false, false, false))
+                    const target = replaceHue(values[1], values[0].h)
+
+                    return {
+                        values: values,
+                        headers: [ "H", "SV" ],
+                        target: snapColorDepth(target),
+                        selections: [ snapColorDepth(hsv(0.0, 0.5, 0.8)) ],
+                    }
+                }
+            },
+            {
+                header: "Combine HS and V",
+
+                createState: function () {
+                    const values = randomNextChallengeColorPair(hsv(false, false, false))
+                    const target = hsv(values[0].h, values[0].s, replaceHue(values[1], values[0].h).v)
+
+                    return {
+                        values: values,
+                        headers: [ "HS", "V" ],
+                        target: snapColorDepth(target),
+                        selections: [ snapColorDepth(hsv(0.0, 0.5, 0.8)) ],
+                    }
+                }
+            },
+            {
+                header: "Combine HV and S",
+
+                createState: function () {
+                    const values = randomNextChallengeColorPair(hsv(false, false, false))
+                    const target = hsv(values[0].h, replaceHue(values[1], values[0].h).s, values[0].v)
+
+                    return {
+                        values: values,
+                        headers: [ "HV", "S" ],
+                        target: snapColorDepth(target),
+                        selections: [ snapColorDepth(hsv(0.0, 0.5, 0.5)) ],
+                    }
+                }
+            },
+        ]
+
+        function setChallengeValues() {
+            for (let i = 0; i < state.values.length; i++) {
+                challengeLabels[i].innerText = state.headers[i]
+                challengeElements[i].style.background = formatStyleRgb(hsvToRgb(state.values[i]))
+            }
+
+            if (state.target != null) {
+                targetElement.style.background = formatStyleRgb(hsvToRgb(state.target))
+            }
+        }
+
+        function setChallengeLayout() {
+            const isTargetVisible = isSubmitted && state.target != null
+            const visibleValuesCount = (isChallengeVisible ? state.values.length : 0) + (isTargetVisible ? 1 : 0)
+            const visibleValuesWidth = visibleValuesCount > 0 ? 100 / visibleValuesCount : 0
+            const selectionWidth = activatedSelectionsCount > 0 ? 100 / activatedSelectionsCount : 0
+
+            for (let i = 0; i < selectionElements.length; i++) {
+                selectionElements[i].style.visibility = activatedSelectionsCount < i ? "collapse" : "visible"
+                selectionElements[i].style.left = (i * selectionWidth) + "%"
+                selectionElements[i].style.top = visibleValuesCount == 0 ? "0%" : "50%"
+                selectionElements[i].style.width = selectionWidth + "%"
+            }
+
+            for (let i = 0; i < challengeElements.length; i++) {
+                challengeElements[i].style.visibility = isChallengeVisible && i < state.values.length ? "visible" : "collapse"
+                challengeElements[i].style.left = (i * visibleValuesWidth) + "%"
+                challengeElements[i].style.bottom = isSelectionVisible ? "50%" : "0"
+                challengeElements[i].style.width = visibleValuesWidth + "%"
+            }
+
+            targetElement.style.visibility = isTargetVisible ? "visible" : "collapse"
+            targetElement.style.left = (visibleValuesWidth * (visibleValuesCount - 1)) + "%"
+            targetElement.style.bottom = isSelectionVisible ? "50%" : "0"
+            targetElement.style.width = visibleValuesWidth + "%"
+
+            reloadButton.style.visibility = !isStarted || isSubmitted ? "visible" : "collapse"
+            submitButton.style.visibility = isStarted && !isSubmitted ? "visible" : "collapse"
+
+            challengeVisibilityButton.style.opacity = (isChallengeVisible && isChallengeAutoHide ? 0.3 : 1.0) * overlayOpacity
+            challengeVisibleImage.style.visibility = isChallengeVisible ? "visible" : "collapse"
+            challengeHiddenImage.style.visibility = !isChallengeVisible ? "visible" : "collapse"
+
+            resultLabel.style.visibility = isSubmitted ? "visible" : "collapse"
+
+            pickerHCanvas.style.visibility = pickerLock.h && !visualizeInputArea ? "collapse" : "visible"
+
+            if (state.target != null) {
+                setCursorsPosition(state.target, targetHCursor1, targetSVCursor1)
+            }
+            else {
+                for (let i = 0; i < state.values.length; i++) {
+                    setCursorsPosition(state.values[i], targetHCursors[i], targetSVCursors[i])
+                }
+            }
+        }
+
+        function abs(value) {
+            return Math.abs(value)
+        }
+
+        function setWindowLayout() {
+            if (!isLoaded) {
+                return
+            }
+
+            let width = document.fullscreenElement ? window.screen.width : window.innerWidth
+            let height = document.fullscreenElement ? window.screen.height : window.innerHeight
+
+            rootContainerScale = Math.min(width, height) * layoutScale / layoutDefaultScale
+
+            height -= document.fullscreenElement && width < height ? fullscreenBottomMargin : 0
+
+            width /= rootContainerScale
+            height /= rootContainerScale
+
+            rootContainer.style.transform = "scale(" + rootContainerScale + ")"
+            rootContainer.style.width = width + "px"
+            rootContainer.style.height = height + "px"
+
+            //const devicePhysicalWidth = window.innerWidth * window.devicePixelRatio
+            //const devicePhysicalHeight = window.innerHeight * window.devicePixelRatio
+
+            if (width < height) {
+                let split = height - width
+                pickerCanvasPosition = { x: 0, y: split }
+                pickerCanvasScale = width / pickerHCanvasSize
+
+                challengeContainer.style.left = "0px"
+                challengeContainer.style.width = width + "px"
+                challengeContainer.style.top = "0px"
+                challengeContainer.style.height = split + "px"
+
+                pickerContainer.style.left = "0px"
+                pickerContainer.style.width = width + "px"
+                pickerContainer.style.top = split + "px"
+                pickerContainer.style.height = width + "px"
+            }
+            else {
+                pickerCanvasScale = height / pickerHCanvasSize
+
+                if (isLeftHanded) {
+                    let split = height
+                    pickerCanvasPosition = { x: 0, y: 0 }
+                    challengeContainer.style.left = split + "px"
+                    challengeContainer.style.width = (width - split) + "px"
+                    pickerContainer.style.left = "0px"
+                    pickerContainer.style.width = split + "px"
+                }
+                else {
+                    let split = width - height
+                    pickerCanvasPosition = { x: split, y: 0 }
+                    challengeContainer.style.left = "0px"
+                    challengeContainer.style.width = split + "px"
+                    pickerContainer.style.left = split + "px"
+                    pickerContainer.style.width = (width - split) + "px"
+                }
+
+                challengeContainer.style.top = "0px"
+                challengeContainer.style.height = height + "px"
+
+                pickerContainer.style.top = "0px"
+                pickerContainer.style.height = height + "px"
+            }
+
+            setChallengeLayout()
+            setSelectionElements()
+        }
+
+        function windowMouseDown(e) {
+            if (e.button == 0) {
+                const time = Date.now().valueOf()
+                pickerCapture = null
+
+                processPickerInput({ x: (e.pageX / rootContainerScale - pickerCanvasPosition.x - layoutOffset.x) / pickerCanvasScale, y: (e.pageY / rootContainerScale - pickerCanvasPosition.y - layoutOffset.y) / pickerCanvasScale, time: time, imprecise: visualizeInputAreaImprecise })
+                e.preventDefault()
+                e.stopPropagation()
+            }
+
+            if (e.button == 2) {
+                next()
+                e.preventDefault()
+            }
+        }
+
+        function windowMouseMove(e) {
+            if (e.buttons == 1) {
+                const time = Date.now().valueOf()
+                processPickerInput({ x: (e.pageX / rootContainerScale - pickerCanvasPosition.x - layoutOffset.x) / pickerCanvasScale, y: (e.pageY / rootContainerScale - pickerCanvasPosition.y - layoutOffset.y) / pickerCanvasScale, time: time, imprecise: visualizeInputAreaImprecise })
+                e.preventDefault()
+                e.stopPropagation()
+            }
+        }
+
+        function pickerTouchStart(e) {
+            const time = Date.now().valueOf()
+            pickerCapture = null
+
+            for (let i = 0; i < e.touches.length; i++) {
+                const touch = e.touches[i]
+                processPickerInput({ x: (touch.clientX / rootContainerScale - pickerCanvasPosition.x - layoutOffset.x) / pickerCanvasScale, y: (touch.clientY / rootContainerScale - pickerCanvasPosition.y - layoutOffset.y) / pickerCanvasScale, time: time, imprecise: true })
+            }
+
+            e.preventDefault()
+            e.stopPropagation()
+        }
+
+        function pickerTouchMove(e) {
+            const time = Date.now().valueOf()
+            for (let i = 0; i < e.touches.length; i++) {
+                const touch = e.touches[i]
+                processPickerInput({ x: (touch.clientX / rootContainerScale - pickerCanvasPosition.x - layoutOffset.x) / pickerCanvasScale, y: (touch.clientY / rootContainerScale - pickerCanvasPosition.y - layoutOffset.y) / pickerCanvasScale, time: time, imprecise: true })
+            }
+
+            e.preventDefault()
+            e.stopPropagation()
+        }
+
+        function windowKeyDown(e) {
+            if (e.key.toLowerCase() == " ") {
+                next()
+                e.preventDefault()
+            }
+        }
+
+        function challengeContainerClick(e) {
+            next()
+            e.preventDefault()
+            e.stopPropagation()
+        }
+
+        function setCookie(key, value) {
+            key = encodeURIComponent(key)
+            value = encodeURIComponent(value)
+            document.cookie = key + "=" + value + "; SameSite=Strict; max-age=1000000000"
+        }
+
+        function getCookie(key) {
+            key = encodeURIComponent(key) + "="
+            const value = document.cookie.split("; ").find((row) => row.startsWith(key))?.split("=")[1]
+            return value != undefined ? decodeURIComponent(value) : undefined
+        }
+
+        function tryParseBool(value, defaultValue) {
+            return value != null && value != undefined ? value.toLowerCase() == "true" : defaultValue
+        }
+
+        function tryParseInt(value, defaultValue) {
+            const result = parseInt(value)
+            return isNaN(result) ? defaultValue : result
+        }
+
+        function tryParseFloat(value, defaultValue) {
+            const result = parseFloat(value)
+            return isNaN(result) ? defaultValue : result
+        }
+
+        function sqr(value) {
+            return value * value
+        }
+
+        function processPickerInput(touch) {
+
+            const time = touch.time
+
+            let size = pickerHCanvasSize
+            let margin = pickerHueThickness * size
+            let size2 = size - 2.0 * margin
+
+            let x = touch.x
+            let y = touch.y
+
+            if (x < 0.0 || x > size || y < 0.0 || y > size) {
+                return
+            }
+
+            x = 2.0 * (x / size) - 1.0
+            y = 2.0 * (y / size) - 1.0
+
+            if (pickerCapture == null) {
+                pickerCapture = getInputArea(x, y, touch.imprecise)
+
+                activeSelectionIndex = pickerCapture.cursorIndex
+                activeSelection = selections[activeSelectionIndex]
+                initialActiveSelection = hsvClone(selections[activeSelectionIndex])
+
+                activatedSelectionsCount = Math.max(pickerCapture.cursorIndex + 1, activatedSelectionsCount)
+
+                setChallengeLayout()
+                invalidatePickerCanvas()
+            }
+
+            if (pickerCapture.dragOffset != null) {
+                x += pickerCapture.dragOffset.x
+                y += pickerCapture.dragOffset.y
+            }
+
+            if (pickerCapture.isHueCursor) {
+                let h = getPickerHueAt(x, y, true)
+
+                activeSelection.h = h
+
+                const adjustedTarget = replaceHue(targets[activeSelectionIndex], activeSelection.h)
+                const adjustedSelection = adjustSelection ? replaceHue(initialActiveSelection, activeSelection.h) : activeSelection
+
+                activeSelection.s = pickerLock.s ? adjustedTarget.s : adjustedSelection.s
+                activeSelection.v = pickerLock.v ? adjustedTarget.v : adjustedSelection.v
+
+                setSelectionElements()
+                invalidatePickerCanvas()
+            }
+            else {
+                x = clamp((x + pickerSVArea) / (2.0 * pickerSVArea), 0.0, 1.0)
+                y = clamp((y + pickerSVArea) / (2.0 * pickerSVArea), 0.0, 1.0)
+
+                const c = getPickerSVAt(x, y)
+
+                if (!pickerLock.s) {
+                    activeSelection.s = c.s
+                }
+
+                if (!pickerLock.v) {
+                    activeSelection.v = c.v
+                }
+
+                setSelectionElements()
+                if (visualizeInputArea) {
+                    invalidatePickerCanvas()
+                }
+            }
+
+            if (!isStarted) {
+                isStarted = true
+
+                isChallengeVisible = isChallengeVisible && !isChallengeAutoHide
+                isSelectionVisible = true
+                setChallengeLayout()
+            }
+
+            if (isSubmitted) {
+                setResultLabel()
+            }
+
+            lastTouch = touch
+        }
+
+        function hsv(h, s, v) {
+            return { h: h, s: s, v: v }
+        }
+
+        function rgb(r, g, b) {
+            return { r: r, g: g, b: b }
+        }
+
+        function hsvClone(c) {
+            return { h: c.h, s: c.s, v: c.v }
+        }
+
+        function componentCurve(x) {
+            x = x % 6.0
+            const a = x >= 3.0 ? 1.0 : 0.0
+            const b = x < 2.0 ? 0.0 : x < 3.0 ? 1.0 : x < 5.0 ? 0.0 : -1.0
+            return a + b * (x % 1.0)
+        }
+
+        function hsvToRgb(color) {
+
+            if (oklabSpace) {
+                const c = okhsv_to_srgb(color.h, color.s, Math.max(color.v, 0.0001))
+                return rgb(c[0] / 255.0, c[1] / 255.0, c[2] / 255.0)
+            }
+
+            const a = (1.0 - color.s) * color.v
+            const b = color.s * color.v
+
+            return {
+                r: a + b * componentCurve(color.h * 6.0 + 4.0),
+                g: a + b * componentCurve(color.h * 6.0 + 2.0),
+                b: a + b * componentCurve(color.h * 6.0 + 0.0)
+            }
+        }
+
+        function rgbToHsv(color) {
+
+            if (oklabSpace) {
+                const c = srgb_to_okhsv(color.r * 255.0, color.g * 255.0, color.b * 255.0)
+                return hsv(c[0], c[1], c[2])
+            }
+
+            const r = color.r
+            const g = color.g
+            const b = color.b
+
+            const max = Math.max(r, g, b)
+            const min = Math.min(r, g, b)
+            const range = max - min
+
+            if (max < 0.0001) {
+                return { h: 0.0, s: 0.0, v: 0.0 }
+            }
+
+            const s = range / max
+            const v = max
+
+            if (range < 0.0001) {
+                return { h: 0.0, s: s, v: v }
+            }
+
+            if (r > g && r > b) {
+                return g > b ?
+                    hsv((0.0 + (g - min) / range) / 6.0, s, v) : // 1/6
+                    hsv((6.0 - (b - min) / range) / 6.0, s, v) // 6/6
+            }
+
+            if (g > r && g > b) {
+                return r > b ?
+                    hsv((2.0 - (r - min) / range) / 6.0, s, v) : // 2/6
+                    hsv((2.0 + (b - min) / range) / 6.0, s, v) // 3/6
+            }
+
+            return r > g ?
+                hsv((4.0 + (r - min) / range) / 6.0, s, v) : // 4/6
+                hsv((4.0 - (g - min) / range) / 6.0, s, v) // 5/6
+        }
+
+        function replaceHue(c, h) {
+            if (!oklabSpace) {
+                return hsv(h, c.s, c.v)
+            }
+
+            const c1 = okhsv_to_srgb(c.h, c.s, Math.max(c.v, 0.0001))
+            const c2 = linear_srgb_to_oklab(srgb_transfer_function_inv(c1[0] / 255.0), srgb_transfer_function_inv(c1[1] / 255.0), srgb_transfer_function_inv(c1[2] / 255.0))
+            const r = Math.sqrt(c2[1] * c2[1] + c2[2] * c2[2])
+            const a = r * Math.cos(h * Math.PI * 2.0)
+            const b = r * Math.sin(h * Math.PI * 2.0)
+            const c3 = oklab_to_linear_srgb(c2[0], a, b)
+            const n = 1.0;//Math.max(1.0, c3[0], c3[1], c3[2])
+            const c4 = rgbToHsv(rgb(srgb_transfer_function(clamp(c3[0] / n, 0.0, 1.0)), srgb_transfer_function(clamp(c3[1] / n, 0.0, 1.0)), srgb_transfer_function(clamp(c3[2] / n, 0.0, 1.0))))
+            return c4
+        }
+
+        function mixColors(color1, color2) {
+            const rgb1 = hsvToRgb(color1)
+            const rgb2 = hsvToRgb(color2)
+            return rgbToHsv(rgb((rgb1.r + rgb2.r) / 2.0, (rgb1.g + rgb2.g) / 2.0, (rgb1.b + rgb2.b) / 2.0))
+        }
+
+        function clamp(value, min, max) {
+            return value < min ? min : value > max ? max : value
+        }
+
+        function randomNextInt(max) {
+            return Math.floor(Math.random() * max)
+        }
+
+        function randomNextDouble() {
+            return Math.random()
+        }
+
+        function randomNextValue(previousValue, minOffset) {
+            const a = Math.max(0.0, previousValue - minOffset)
+            const b = Math.min(1.0, previousValue + minOffset)
+            const range1 = a
+            const range2 = 1.0 - b
+
+            let value = (range1 + range2) * Math.random()
+
+            if (value > a) {
+                value += b - a
+            }
+
+            return value
+        }
+
+        function randomNextValueCyclic(previousValue, minOffset) {
+            const a = (previousValue - minOffset + 1.0) % 1.0
+            const b = (previousValue + minOffset + 1.0) % 1.0
+            const range = 1.0 - 2.0 * minOffset
+
+            let value = range * Math.random()
+
+            if (b < a) {
+                value += b
+            }
+            else if (value > a) {
+                value += b - a
+            }
+
+            return value
+        }
+
+        function randomNextChallengeColor(lock) {
+            const minDepth = colorDepth == 0 ? 0.0 : (1.0 / colorDepth)
+            const minS = lock.h && lock.v ? 0.0 : Math.max(challengeMinS, minDepth)
+            const minV = lock.h && lock.s ? 0.0 : challengeMinV
+
+            const value = hsv(randomNextDouble(), minS + (1.0 - minS) * (randomNextDouble()), minV + (1.0 - minV) * (randomNextDouble()))
+            return snapColorDepth(value)
+        }
+
+        function randomNextChallengeColorPair(lock, match) {
+            if (match == null) {
+                match = lock
+            }
+
+            const minDepth = colorDepth == 0 ? 0.0 : (1.0 / colorDepth)
+            const minS = lock.h && lock.v ? 0.0 : Math.max(challengeMinS, minDepth)
+            const minV = lock.h && lock.s ? 0.0 : challengeMinV
+
+            const value1 = hsv(randomNextDouble(), minS + (1.0 - minS) * (randomNextDouble()), minV + (1.0 - minV) * (randomNextDouble()))
+
+            const h2 = match.h ? value1.h : randomNextValueCyclic(value1.h, challengeOffsetH)
+            const adjustedValue1 = replaceHue(value1, h2)
+            const s2 = match.s ? adjustedValue1.s : (minS + (1.0 - minS) * randomNextValue((value1.s - minS) / (1.0 - minS), challengeOffsetS))
+            const v2 = match.v ? adjustedValue1.v : (minV + (1.0 - minV) * randomNextValue((value1.v - minV) / (1.0 - minV), challengeOffsetV))
+
+            const value2 = hsv(h2, s2, v2)
+
+            const adjustedValue2 = replaceHue(value2, value1.h)
+            value1.s = match.s ? adjustedValue2.s : value1.s
+            value1.v = match.v ? adjustedValue2.v : value1.v
+
+            return [ snapColorDepth(value1), snapColorDepth(value2) ]
+        }
+
+        function formatStyleRgb(color) {
+            return "rgb(" + Math.floor(color.r * 255) + "," + Math.floor(color.g * 255) + "," + Math.floor(color.b * 255) + ")"
+        }
+
+        function snapHueDepth(h) {
+            const f = 5.0 * colorDepth
+            return colorDepth == 0 ? h : ((Math.round(h * f)) / f) % 1.0
+        }
+
+        function snapSaturationDepth(s) {
+            return colorDepth == 0 ? s : clamp((Math.floor(s * colorDepth)) / (colorDepth - 1.0), 0.0, 1.0)
+        }
+
+        function snapValueDepth(v) {
+            return colorDepth == 0 ? v : clamp((Math.floor(v * colorDepth + 0.99)) / colorDepth, 1.0 / colorDepth, 1.0)
+        }
+
+        function snapColorDepth(c) {
+            return colorDepth == 0 ? c : hsv(snapHueDepth(c.h), snapSaturationDepth(c.s), snapValueDepth(c.v))
+        }
+
+        function getPickerHueAt(x, y, smooth) {
+            const q = x > 0.0  ? (y > 0.0 ? 0 : 3) : (y > 0.0 ? 1 : 2)
+
+            const x0 = x
+            const y0 = y
+
+            x = Math.abs(x)
+            y = Math.abs(y)
+            if (q == 1 || q == 3) {
+                const w = x
+                x = y
+                y = w
+            }
+
+            let f = (x >= pickerPivotPosition && y >= pickerPivotPosition) ? 0.5 * pickerEdgeLength :
+                (x < y ? (pickerEdgeLength * (1.0 - 0.5 * x / pickerPivotPosition)) : (0.5 * pickerEdgeLength * y / pickerPivotPosition))
+
+            f = pickerEdgeLength * q + f
+
+            let an = (x <= pickerPivotPosition && y <= pickerPivotPosition) ? (x < y ? 1.0 : 0.0) :
+                (2.0 * Math.atan2(Math.max(0.0, y - pickerPivotPosition), Math.max(0.0, x - pickerPivotPosition)) / Math.PI)
+
+            an = pickerCornerLength * (q + an)
+
+            let h = (an + f) / (4.0 * pickerSegmentLength)
+
+            if (smooth) {
+                const edge = 1.0 - Math.max(x, y)
+                const corner = sqr(1.0 - Math.abs(x - y))
+                const t = clamp((edge - (2.0 - corner) * pickerHueThickness) / pickerHueThickness, 0.0, 1.0)
+                const h2 = (Math.atan2(y0, x0) / (2.0 * Math.PI) + 1.0) % 1.0
+                h = (1.0 - t) * h + t * h2
+            }
+
+            h = (h + pickerHueOffset + 0.5) * pickerHueDirection
+            h = (h + 10.0) % 1.0
+
+            return snapHueDepth(h)
+        }
+
+        function getPickerSVAt(x, y) {
+            const s = pickerLock.s ? activeSelection.s : x
+            const v = pickerLock.v ? activeSelection.v : (1.0 - y)
+            return snapColorDepth(hsv(activeSelection.h, s, v))
+        }
+
+        function setPickerColorBrightness(c) {
+            const v = pickerLock.v ? Math.min(pickerBrightness, c.v) : (pickerBrightness * c.v)
+            return hsv(c.h, c.s, v)
+        }
+
+        function getHuePickerRgb(c) {
+            if (oklabSpace) {
+                const l = 0.8 * c.v
+                const a = 0.4 * c.s * Math.cos(c.h * Math.PI * 2.0) * pickerBrightness
+                const b = 0.4 * c.s * Math.sin(c.h * Math.PI * 2.0) * pickerBrightness
+
+                const c2 = oklab_to_linear_srgb(l, a, b)
+                return rgb(srgb_transfer_function(c2[0]), srgb_transfer_function(c2[1]), srgb_transfer_function(c2[2]))
+            }
+
+            return hsvToRgb(c)
+        }
+
+        function drawPickerH(ctx) {
+            const size = pickerHCanvasSize
+            const margin1 = pickerHCanvasSize * pickerHueThickness + 5
+            const margin2 = pickerHCanvasSize * (1.0 - pickerHueThickness) - 5
+
+            const imageData = ctx.createImageData(size, size)
+            const data = imageData.data
+            const step = 2.0 / size
+
+            let i = 0
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    if (x > margin1 && x < margin2 && y > margin1 && y < margin2) {
+                        i += 4
+                        continue
+                    }
+
+                    const h = getPickerHueAt(x * step - 1.0, y * step - 1.0, false)
+                    const c1 = hsv(h, 1.0, 1.0);
+                    const c2 = setPickerColorBrightness(c1)
+                    const c3 = getHuePickerRgb(c2)
+
+                    data[i++] = 255 * c3.r
+                    data[i++] = 255 * c3.g
+                    data[i++] = 255 * c3.b
+                    data[i++] = 255
+                }
+            }
+
+            ctx.putImageData(imageData, 0, 0)
+        }
+
+        function getLength(x, y) {
+            return Math.sqrt(x * x + y * y)
+        }
+
+        function getInputArea(x, y, imprecise) {
+
+            const svCornerRadius = imprecise ? 0.3 : 0.0
+            const svMarginThickness = imprecise ? 0.1 : 0.0
+
+            const radius = 30.0 / (pickerHCanvasSize * pickerCanvasScale)
+            const enableSelect = activatedSelectionsCount == selections.length
+
+            const dragRadius = imprecise ? 3.0 * radius : radius
+            const selectRadius = enableSelect ? (imprecise ? 6.0 * radius : radius) : dragRadius
+
+            const x0 = Math.max(Math.abs(x) - (pickerSVArea - svMarginThickness - svCornerRadius), 0.0)
+            const y0 = Math.max(Math.abs(y) - (pickerSVArea - svMarginThickness - svCornerRadius), 0.0)
+            const d0 = getLength(x0, y0)
+
+            const isHueArea = d0 > svCornerRadius && !pickerLock.h || (pickerLock.s && pickerLock.v)
+
+            const inputArea = {
+                cursorIndex: Math.min(activatedSelectionsCount, selections.length - 1),
+                isHueCursor: isHueArea,
+                distance: 10.0,
+                dragOffset: null
+            }
+
+            for (let i = 0; i < activatedSelectionsCount; i++) {
+                const selection = selections[i]
+
+                const p1 = getHuePosition(selection.h)
+                const x1 = p1.x * 2.0 - 1.0 - x
+                const y1 = p1.y * 2.0 - 1.0 - y
+                const d1 = getLength(x1, y1)
+
+                const p2 = getSaturationValuePosition(selection.s, selection.v)
+                const x2 = !pickerLock.s ? (p2.x * 2.0 - 1.0 - x) :
+                           !pickerLock.h ? Math.max(Math.abs(x) - pickerSVArea + selectRadius, 0.0) : 0.0
+                const y2 = !pickerLock.v ? (p2.y * 2.0 - 1.0 - y) :
+                           !pickerLock.h ? Math.max(Math.abs(y) - pickerSVArea + selectRadius, 0.0) : 0.0
+                const d2 = getLength(x2, y2)
+
+                if (inputArea.distance > d1 && (d1 < selectRadius || isHueArea && activatedSelectionsCount == selections.length) && !pickerLock.h) {
+                    inputArea.distance = d1
+                    inputArea.cursorIndex = i
+                    inputArea.isHueCursor = true
+                    inputArea.dragOffset = d1 < dragRadius ? { x: x1, y: y1 } : null
+                }
+
+                if (inputArea.distance > d2 && (d2 < selectRadius || !isHueArea && activatedSelectionsCount == selections.length) && (!pickerLock.s || !pickerLock.v)) {
+                    inputArea.distance = d2
+                    inputArea.cursorIndex = i
+                    inputArea.isHueCursor = false
+                    inputArea.dragOffset = d2 < dragRadius ? { x: x2, y: y2 } : null
+                }
+            }
+
+            return inputArea
+        }
+
+        function drawPickerInput(ctx) {
+            const size = pickerInputCanvasSize
+
+            const imageData = ctx.createImageData(size, size)
+            const data = imageData.data
+            const step = 2.0 / size
+
+            let i = 0
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const x0 = x * step - 1.0
+                    const y0 = y * step - 1.0
+
+                    const inputArea = getInputArea(x0, y0, visualizeInputAreaImprecise)
+
+                    const h = 0.4 + (inputArea.cursorIndex * 2.0 + (inputArea.isHueCursor ? 1.0 : 0.0)) / 4.0
+                    const s = inputArea.dragOffset != null ? 0.9 : 0.4
+                    const v = inputArea.dragOffset != null ? 0.8 : 1.0
+
+                    const c1 = replaceHue(hsv(0.0, s, v), h);
+
+                    if (Math.abs(Math.max(Math.abs(x0), Math.abs(y0)) - pickerSVArea) < step) {
+                        c1.v *= 0.9
+                    }
+
+                    const c2 = hsvToRgb(c1)
+
+                    data[i++] = 255 * c2.r
+                    data[i++] = 255 * c2.g
+                    data[i++] = 255 * c2.b
+                    data[i++] = 255
+                }
+            }
+
+            ctx.putImageData(imageData, 0, 0)
+        }
+
+        function drawPickerSV(ctx) {
+            const size = pickerSVCanvasSize
+
+            if (pickerLock.s && pickerLock.v) {
+                ctx.fillStyle = "black";
+                ctx.fillRect(0, 0, size, size)
+            }
+            else {
+                const imageData = ctx.createImageData(size, size)
+                const data = imageData.data
+                const step = 1.0 / (size - 1.0)
+
+                let i = 0
+                for (let y = 0; y < size; y++) {
+                    for (let x = 0; x < size; x++) {
+                        const c1 = getPickerSVAt(x * step, y * step)
+                        const c2 = setPickerColorBrightness(c1)
+                        const c3 = hsvToRgb(c2)
+
+                        data[i++] = 255 * c3.r
+                        data[i++] = 255 * c3.g
+                        data[i++] = 255 * c3.b
+                        data[i++] = 255
+                    }
+                }
+
+                ctx.putImageData(imageData, 0, 0)
+            }
+        }
+
+        function getHuePosition(h)
+        {
+            h = h * pickerHueDirection - pickerHueOffset - 0.5
+            h = (h + 10.0) % 1.0
+
+            h += pickerEdgeLength / (8.0 * pickerSegmentLength)
+
+            const index = Math.floor(h * 4.0) % 4
+
+            h = (h * 4.0) % 1.0
+            h *= pickerSegmentLength
+
+            const an = (Math.PI / 2.0) * (h - pickerEdgeLength) / pickerCornerLength
+            const f = h / pickerEdgeLength
+
+            let cx = 0.0
+            let cy = 0.0
+
+            if (f < 1.0) {
+                cx = 1.0 - pickerHueThickness
+                cy = f * pickerEdgeLength - 0.5 * pickerEdgeLength
+            }
+            else {
+                cx = pickerPivotPosition + pickerPivotRadius * Math.cos(an)
+                cy = pickerPivotPosition + pickerPivotRadius * Math.sin(an)
+            }
+
+            if (index == 1) {
+                w = cx
+                cx = -cy
+                cy = w
+            }
+            if (index == 2) {
+                cx = -cx
+                cy = -cy
+            }
+            if (index == 3) {
+                w = cx
+                cx = cy
+                cy = -w
+            }
+
+            cx = (cx + 1.0) / 2.0
+            cy = (cy + 1.0) / 2.0
+
+            return { x: cx, y: cy }
+        }
+
+        function getSaturationValuePosition(s, v) {
+            //s += colorDepth > 0 ? 0.1 : 0
+            //v -= colorDepth > 0 ? 1 / (colorDepth + 1) : 0
+            const scale = colorDepth > 0 ? (colorDepth - 1.0) / colorDepth : 1.0
+            const offset = colorDepth > 0 ? 0.5 / colorDepth : 0.0
+
+            return {
+                x: pickerLock.s ? 0.5 : (pickerHueThickness + clamp(s * scale + offset, offset, 1.0 - offset) * pickerSVArea),
+                y: pickerLock.v ? 0.5 : (pickerHueThickness + clamp(1.0 - v + offset, offset, 1.0 - offset) * pickerSVArea)
+            }
+        }
+
+        function setCursorsPosition(color, hCursor, svCursor) {
+            if (hCursor != null) {
+                const pos = getHuePosition(color.h)
+                hCursor.style.left = (pos.x * pickerHCanvasSize * pickerCanvasScale - 15.0) + "px"
+                hCursor.style.top = (pos.y * pickerHCanvasSize * pickerCanvasScale - 15.0) + "px"
+            }
+
+            if (svCursor != null) {
+                const pos = getSaturationValuePosition(color.s, color.v)
+                svCursor.style.left = (pos.x * pickerHCanvasSize * pickerCanvasScale - 15.0) + "px"
+                svCursor.style.top = (pos.y * pickerHCanvasSize * pickerCanvasScale - 15.0) + "px"
+            }
+        }
+
+        function formatPercents(value) {
+            return (abs(value) < 0.1 ? (Math.round(value * 1000) / 10.0).toFixed(1) : Math.round(value * 100)) + "%"
+        }
+
+        function setResultLabel() {
+            const components = 3 - (pickerLock.h ? 1 : 0) - (pickerLock.s ? 1 : 0) - (pickerLock.v ? 1 : 0)
+            let offset = 0.0
+            let totalH = 0.0
+            let totalS = 0.0
+            let totalV = 0.0
+
+            for (let i = 0; i < selections.length; i++) {
+                const selection = selections[i]
+                const target = targets[i]
+                const adjustedTarget = replaceHue(target, selection.h)
+
+                let h = selection.h - target.h
+                let s = selection.s - adjustedTarget.s
+                let v = selection.v - adjustedTarget.v
+                h = 2.0 * Math.min(abs(h), 1.0 - abs(h))
+
+                totalH += selections.length > 1 ? abs(h) : h
+                totalS += selections.length > 1 ? abs(s) : s
+                totalV += selections.length > 1 ? abs(v) : v
+                offset += (components == 0 ? 1 : Math.sqrt((h * h + s * s + v * v) / components))
+            }
+
+            totalH /= selections.length
+            totalS /= selections.length
+            totalV /= selections.length
+            offset /= selections.length
+
+            resultLabel1.innerText = "Distance " + formatPercents(offset)
+            resultLabel2.innerText = "H " + formatPercents(totalH) + " S " + formatPercents(totalS) + " V " + formatPercents(totalV)
+
+            let stars = clamp(Math.round(10.0 * (1.0 - offset * 8.0)) / 2.0, 0.5, 5.0)
+            starsImage.style.width = (15.0 * stars - 1.5) + "px"
+        }
+
+        function setSelectionElements() {
+            for (let i = 0; i < selections.length; i++) {
+                const selection = selections[i]
+                setCursorsPosition(selection, selectionHCursors[i], selectionSVCursors[i])
+                selectionElements[i].style.background = formatStyleRgb(hsvToRgb(selection))
+
+                const opacity = i == activeSelectionIndex ? 1.0 : 0.3
+
+                selectionHCursors[i].style.opacity = opacity
+                selectionSVCursors[i].style.opacity = opacity
+                selectionHCursors[i].style.visibility = i >= activatedSelectionsCount || pickerLock?.h ? "collapse" : "visible"
+                selectionSVCursors[i].style.visibility = i >= activatedSelectionsCount || pickerLock?.s && pickerLock?.v ? "collapse" : "visible"
+
+                if (isSubmitted) {
+                    const adjustedTarget = colorDepth == 0 ? replaceHue(targets[i], selection.h) : targets[i]
+                    setCursorsPosition(adjustedTarget, null, targetSVCursors[i])
+
+                    targetHCursors[i].style.opacity = opacity
+                    targetSVCursors[i].style.opacity = opacity
+                    targetHCursors[i].style.visibility = pickerLock?.h ? "collapse" : "visible"
+                    targetSVCursors[i].style.visibility = pickerLock?.s && pickerLock?.v ? "collapse" : "visible"
+                }
+            }
+        }
+
+        function setLayoutShift() {
+            if (layoutShiftRadius == 0) {
+                return
+            }
+
+            const time = Date.now().valueOf()
+            if (layoutShiftTime + layoutShiftInterval < time) {
+                layoutShift++
+                layoutShiftTime = time
+
+                const a = layoutShift * Math.PI / 8.0
+                const r = layoutShiftRadius * Math.min(layoutShift / 4.0, 1.0)
+                layoutOffset = { x: r * Math.cos(a), y: r * Math.sin(a) }
+                rootOffsetContainer.style.margin = layoutOffset.y + "px " + "0 0 " + layoutOffset.x + "px"
+            }
+        }
+
+        function animationFrame() {
+
+            if (visualizeInputArea) {
+                const ctx = pickerInputCanvas.getContext("2d", { alpha: false })
+                ctx.save()
+                ctx.globalCompositeOperation = "src-over"
+                drawPickerInput(ctx)
+                ctx.restore()
+                isPickerHCanvasValid = true
+                isPickerSVCanvasValid = true
+            }
+
+            if (!isPickerHCanvasValid) {
+                const ctx = pickerHCanvas.getContext("2d", { alpha: false })
+                ctx.save()
+                ctx.globalCompositeOperation = "src-over"
+                drawPickerH(ctx)
+                ctx.restore()
+                isPickerHCanvasValid = true
+            }
+
+            if (!isPickerSVCanvasValid) {
+                const ctx = pickerSVCanvas.getContext("2d", { alpha: false })
+                ctx.save()
+                ctx.globalCompositeOperation = "src-over"
+                drawPickerSV(ctx)
+                ctx.restore()
+                isPickerSVCanvasValid = true
+            }
+
+            isAnimationFrameRequested = false
+        }
+
+        function submit() {
+            isSubmitted = true
+            isChallengeVisible = true
+            isSelectionVisible = true
+            setResultLabel()
+            setChallengeLayout()
+            setSelectionElements()
+        }
+
+        function reload() {
+            setLayoutShift()
+            setChallengeState()
+        }
+
+        function next() {
+            if (!isStarted || isSubmitted) {
+                reload()
+            }
+            else {
+                submit()
+            }
+        }
+
+        function invalidatePickerCanvas() {
+            if (pickerBrightness < 0.001) {
+                return
+            }
+
+            isPickerSVCanvasValid = false
+
+            if (!isAnimationFrameRequested) {
+                isAnimationFrameRequested = true
+                window.requestAnimationFrame(animationFrame)
+            }
+        }
+
+        function reloadClick(e) {
+            reload()
+            e.preventDefault()
+            e.stopPropagation()
+        }
+
+        function submitClick(e) {
+            submit()
+            e.preventDefault()
+            e.stopPropagation()
+        }
+
+        function challengeVisibilityClick(e) {
+            isChallengeVisible = !isChallengeVisible || isChallengeAutoHide || !isStarted
+            isChallengeAutoHide = !isStarted && !isChallengeAutoHide || isStarted && !isChallengeVisible
+            setCookie("autohide", isChallengeAutoHide)
+            setChallengeLayout()
+            e.preventDefault()
+            e.stopPropagation()
+        }
+
+        function fullscreenClick(e) {
+            if (document.fullscreenElement) {
+                document.exitFullscreen()
+            }
+            else {
+                document.documentElement.requestFullscreen()
+            }
+
+            e.preventDefault()
+            e.stopPropagation()
+        }
+
+        function setChallengeMenu() {
+            let i = 0
+            let group = null
+
+            while (i < challenges.length) {
+                let challenge = challenges[i]
+
+                if (challenge.group != null) {
+                    groupElement = document.createElement("optgroup")
+                    groupElement.label = challenge.group
+                    challengeButton.appendChild(groupElement)
+                }
+
+                challengeElement = document.createElement("option")
+                challengeElement.value = i
+                challengeElement.innerText = challenge.header
+
+                if (groupElement != null) {
+                    groupElement.appendChild(challengeElement)
+                }
+                else {
+                    challengeButton.appendChild(challengeElement)
+                }
+
+                i++
+            }
+        }
+
+        function setOverlayOpacity() {
+
+            for (let i = 0; i < challengeLabels.length; i++) {
+                challengeLabels[i].style.opacity = overlayOpacity
+            }
+
+            targetLabel.style.opacity = overlayOpacity
+            resultLabel.style.opacity = overlayOpacity
+            resultLabel1.style.opacity = overlayOpacity
+            resultLabel2.style.opacity = overlayOpacity
+            challengeButton.style.opacity = overlayOpacity
+            reloadButton.style.opacity = overlayOpacity
+            submitButton.style.opacity = overlayOpacity
+            fullscreenButton.style.opacity = overlayOpacity * 0.3
+        }
+
+        function setPickerCanvas() {
+
+            if (visualizeInputArea) {
+                pickerInputCanvas.style.visibility = "visible"
+                pickerInputCanvas.width = pickerInputCanvasSize
+                pickerInputCanvas.height = pickerInputCanvasSize
+                return
+            }
+
+            pickerInputCanvas.style.visibility = "collapse"
+
+            pickerHCanvas.width = pickerHCanvasSize
+            pickerHCanvas.height = pickerHCanvasSize
+
+            pickerSVCanvasSmooth.style.visibility = "collapse"
+            pickerSVCanvasPixelated.style.visibility = "collapse"
+
+            pickerSVCanvas = colorDepth == 0 ? pickerSVCanvasSmooth : pickerSVCanvasPixelated
+            pickerSVCanvasSize = colorDepth == 0 ? pickerSVCanvasSizeSmooth : colorDepth
+
+            pickerSVCanvas.width = pickerSVCanvasSize
+            pickerSVCanvas.height = pickerSVCanvasSize
+            pickerSVCanvas.style.visibility = "visible"
+            pickerSVCanvas.style.position = "absolute"
+            pickerSVCanvas.style.left = (100.0 * pickerHueThickness) + "%"
+            pickerSVCanvas.style.top = (100.0 * pickerHueThickness) + "%"
+            pickerSVCanvas.style.width = (100.0 * pickerSVArea) + "%"
+            pickerSVCanvas.style.height = (100.0 * pickerSVArea) + "%"
+        }
+
+        function setChallengeState() {
+
+            isStarted = false
+            isSubmitted = false
+            isSelectionVisible = false
+            isChallengeVisible = true
+
+            pickerCapture = null
+
+            state = challenge.createState()
+
+            selections = state.selections
+            targets = state.target != null ? [ state.target ] : state.values
+
+            for (let i = 0; i < 2; i++) {
+                selectionHCursors[i].style.visibility = "collapse"
+                selectionSVCursors[i].style.visibility = "collapse"
+                targetHCursors[i].style.visibility = "collapse"
+                targetSVCursors[i].style.visibility = "collapse"
+            }
+
+            pickerLock = state.pickerLock || hsv(false, false, false)
+            activeSelection = selections[0]
+            activeSelectionIndex = 0
+            activatedSelectionsCount = 0
+
+            setChallengeValues()
+            setChallengeLayout()
+            invalidatePickerCanvas()
+        }
+
+        function challengeChange() {
+            let challengeIndex = challengeButton.value
+            challenge = challenges[challengeIndex]
+            setChallengeState()
+            setCookie("index", challengeIndex)
+        }
+
+        function depthChange() {
+            colorDepth = depthButton.value
+            depthButton.style.opacity = (colorDepth == 0 ? 0.3 : 1.0) * overlayOpacity
+            isPickerHCanvasValid = false
+            isPickerSVCanvasValid = false
+            adjustSelection = colorDepth == 0 && autoAdjust
+            setChallengeState()
+            setPickerCanvas()
+            setCookie("depth", colorDepth)
+        }
+
+        function setFullscreenButton() {
+            fullscreenButton.style.visibility = document.fullscreenElement ? "collapse" : "visible"
+        }
+
+        function getParamValue(name, tryParseValue, defaultValue, queryParams, fragmentParams) {
+            let value = defaultValue
+            value = tryParseValue(getCookie(name), value)
+            value = tryParseValue(fragmentParams[name], value)
+            value = tryParseValue(queryParams.get(name), value)
+            return value
+        }
+
+        function getFragmentParams() {
+            const pairs = document.location.hash.substring(1).split(",")
+
+            const result = {}
+            for (let i = 0; i < pairs.length; i++) {
+                const pair = pairs[i].split("=")
+                result[pair[0]] = pair[1]
+            }
+
+            return result
+        }
+
+        function setDebugMode(debugMode) {
+            if (debugMode == 1) {
+                visualizeInputArea = true
+                visualizeInputAreaImprecise = false
+            }
+
+            if (debugMode == 2) {
+                visualizeInputArea = true
+                visualizeInputAreaImprecise = true
+            }
+        }
+
+        window.onresize = setWindowLayout
+
+        window.onload = function() {
+            const queryParams = new URLSearchParams(document.location.search)
+            const fragmentParams = getFragmentParams()
+            const defaultChallengeIndex = challenges.findIndex(function (c) { return c.isDefault })
+            const challengeIndex = getParamValue("index", tryParseInt, defaultChallengeIndex, queryParams, fragmentParams)
+            const debugMode = getParamValue("debug", tryParseInt, 0, queryParams, fragmentParams)
+            colorDepth = getParamValue("depth", tryParseInt, 0, queryParams, fragmentParams)
+            layoutScale = getParamValue("scale", tryParseFloat, 1.0, queryParams, fragmentParams)
+            isChallengeAutoHide = getParamValue("autohide", tryParseBool, false, queryParams, fragmentParams)
+            isLeftHanded = getParamValue("left", tryParseBool, false, queryParams, fragmentParams)
+            layoutShiftRadius = getParamValue("shift", tryParseInt, 0, queryParams, fragmentParams)
+            oklabSpace = getParamValue("oklab", tryParseBool, true, queryParams, fragmentParams)
+            autoAdjust = getParamValue("adjust", tryParseBool, true, queryParams, fragmentParams)
+            pickerBrightness = getParamValue("brightness", tryParseFloat, 1.0, queryParams, fragmentParams)
+            pickerHueDirection = getParamValue("clockwise", tryParseBool, true, queryParams, fragmentParams) ? 1.0 : -1.0
+            pickerHueOffset = clamp(getParamValue("offset", tryParseFloat, 0.0, queryParams, fragmentParams), 0.0, 1.0) + (oklabSpace ? 0.125 : 0.0)
+            isFullscreenEnabled = getParamValue("fullscreen", tryParseBool, false, queryParams, fragmentParams)
+            fullscreenBottomMargin = getParamValue("margin", tryParseInt, 0, queryParams, fragmentParams)
+            overlayOpacity = getParamValue("overlay", tryParseBool, true, queryParams, fragmentParams) ? 1.0 : 0.0
+
+            rootContainer = document.getElementById("rootContainer")
+            rootOffsetContainer = document.getElementById("rootOffsetContainer")
+            challengeContainer = document.getElementById("challengeContainer")
+            challengeElements = [ document.getElementById("challengeElement1"), document.getElementById("challengeElement2") ]
+            challengeLabels = [ document.getElementById("challengeLabel1"), document.getElementById("challengeLabel2") ]
+            targetElement = document.getElementById("targetElement")
+            targetLabel = document.getElementById("targetLabel")
+            selectionElements = [ document.getElementById("selectionElement1"), document.getElementById("selectionElement2") ]
+            resultLabel = document.getElementById("resultLabel")
+            resultLabel1 = document.getElementById("resultLabel1")
+            resultLabel2 = document.getElementById("resultLabel2")
+            starsImage = document.getElementById("starsImage")
+            reloadButton = document.getElementById("reloadButton")
+            reloadImage = document.getElementById("reloadImage")
+            challengeVisibilityButton = document.getElementById("challengeVisibilityButton")
+            challengeVisibleImage = document.getElementById("challengeVisibleImage")
+            challengeHiddenImage = document.getElementById("challengeHiddenImage")
+            fullscreenButton = document.getElementById("fullscreenButton")
+            fullscreenEnterImage = document.getElementById("fullscreenEnterImage")
+            fullscreenLeaveImage = document.getElementById("fullscreenLeaveImage")
+
+            submitButton = document.getElementById("submitButton")
+            submitImage = document.getElementById("submitImage")
+            challengeButton = document.getElementById("challengeButton")
+            depthButton = document.getElementById("depthButton")
+            pickerContainer = document.getElementById("pickerContainer")
+            pickerHCanvas = document.getElementById("pickerHCanvas")
+            pickerSVCanvasSmooth = document.getElementById("pickerSVCanvasSmooth")
+            pickerSVCanvasPixelated = document.getElementById("pickerSVCanvasPixelated")
+            pickerInputCanvas = document.getElementById("pickerInputCanvas")
+            selectionHCursors = [ document.getElementById("selectionHCursor1"), document.getElementById("selectionHCursor2") ]
+            selectionSVCursors = [ document.getElementById("selectionSVCursor1"), document.getElementById("selectionSVCursor2") ]
+            targetHCursors = [ document.getElementById("targetHCursor1"), document.getElementById("targetHCursor2") ]
+            targetSVCursors = [ document.getElementById("targetSVCursor1"), document.getElementById("targetSVCursor2") ]
+
+            //
+
+            window.addEventListener("contextmenu", function(e) { e.preventDefault() })
+            window.addEventListener("keydown", windowKeyDown)
+            window.addEventListener("mousedown", windowMouseDown)
+            window.addEventListener("mousemove", windowMouseMove)
+            pickerContainer.addEventListener("touchstart", pickerTouchStart)
+            pickerContainer.addEventListener("touchmove", pickerTouchMove)
+            document.addEventListener("fullscreenchange", setFullscreenButton)
+
+            challengeContainer.addEventListener("mousedown", challengeContainerClick)
+            challengeContainer.addEventListener("touchstart", challengeContainerClick)
+            reloadButton.addEventListener("mousedown", reloadClick)
+            reloadButton.addEventListener("touchstart", reloadClick)
+            submitButton.addEventListener("mousedown", submitClick)
+            submitButton.addEventListener("touchstart", submitClick)
+            challengeVisibilityButton.addEventListener("mousedown", challengeVisibilityClick)
+            challengeVisibilityButton.addEventListener("touchstart", challengeVisibilityClick)
+            fullscreenButton.addEventListener("mousedown", fullscreenClick)
+            fullscreenButton.addEventListener("touchstart", fullscreenClick)
+            challengeButton.addEventListener("mousedown", function (e) { e.stopPropagation() })
+            challengeButton.addEventListener("touchstart", function (e) { e.stopPropagation() })
+            challengeButton.addEventListener("change", challengeChange)
+            depthButton.addEventListener("mousedown", function (e) { e.stopPropagation() })
+            depthButton.addEventListener("touchstart", function (e) { e.stopPropagation() })
+            depthButton.addEventListener("change", depthChange)
+
+            isLoaded = true
+
+            setDebugMode(debugMode)
+            setChallengeMenu()
+            setPickerCanvas()
+            setOverlayOpacity()
+
+            const time = Date.now().valueOf()
+            previousTime = time
+            lastTouch.time = time
+            layoutShiftTime = time
+
+            challenge = challenges[challengeIndex]
+            challengeButton.value = challengeIndex
+            setChallengeState()
+
+            depthButton.value = colorDepth
+            depthButton.style.opacity = (colorDepth == 0 ? 0.3 : 1.0) * overlayOpacity
+
+            const pickerSVCanvasSmoothScale = pickerSVCanvasSizeSmooth / (pickerSVCanvasSizeSmooth - 1.0)
+            pickerSVCanvasSmooth.style.transform = "scale(" + pickerSVCanvasSmoothScale + ")"
+            pickerSVCanvasSmooth.style["clip-path"] = "inset(" + (50.0 * (pickerSVCanvasSmoothScale - 1.0) / pickerSVCanvasSmoothScale) + "%)"
+
+            adjustSelection = colorDepth == 0 && autoAdjust
+
+            setWindowLayout()
+
+            fullscreenButton.style.visibility = isFullscreenEnabled ? "visible" : "collapse"
+
+            invalidatePickerCanvas()
+        }
+    </script>
+    <style>
+        select {
+            overflow: hidden;
+            background: transparent;
+            color: inherit;
+            border: none;
+            padding: 2px 2px 2px 2px;
+            margin: 0 0 0 0;
+            font-family: inherit;
+            font-weight: inherit;
+            font-size: inherit;
+            cursor: inherit;
+            line-height: inherit;
+            outline: none;
+            appearance:none;
+        }
+
+        optgroup {
+            font-family: inherit;
+            font-style: inherit;
+            font-weight: inherit;
+            font-size: x-large;
+            background: black;
+        }
+
+        option {
+            font-family: inherit;
+            font-size: inherit;
+            background: black;
+        }
+    </style>
+</head>
+<body style="background: black; color: white; overflow: clip; margin: 0; padding: 0; font-family: monospace; font-weight: bold; -webkit-text-stroke: 0.5px black;">
+    <div id="rootContainer" style="position: absolute; left: 0px; top: 0px; width: 0px; height: 0px; overflow: clip; transform-origin: top left;">
+        <div id="rootOffsetContainer" style="position: absolute; left: 0px; right: 0px; top: 0px; bottom: 0px;">
+            <div id="challengeContainer" style="position: absolute;">
+                <div id="challengeElement1" style="position: absolute; width: 100%; bottom: 50%; top: 0px; margin-right: -1px; margin-bottom: -1px;">
+                    <div id="challengeLabel1" style="position: absolute; bottom: 15px; left: 15px; user-select: none;">Color 1</div>
+                </div>
+                <div id="challengeElement2" style="position: absolute; width: 100%; bottom: 50%; top: 0px; margin-right: -1px; margin-bottom: -1px;">
+                    <div id="challengeLabel2" style="position: absolute; bottom: 15px; left: 15px; user-select: none;">Color 2</div>
+                </div>
+                <div id="targetElement" style="position: absolute; width: 100%; bottom: 50%; top: 0px; margin-bottom: -1px;">
+                    <div id="targetLabel" style="position: absolute; bottom: 15px; left: 15px; user-select: none;">Target</div>
+                </div>
+                <div id="selectionElement1" style="position: absolute; width: 100%; left: 0px; bottom: 0px;">
+                </div>
+                <div id="selectionElement2" style="position: absolute; width: 50%; left: 50%; bottom: 0px;">
+                </div>
+                <div id="resultLabel" style="position: absolute; bottom: 15px; left: 15px; user-select: none;">
+                    <span>
+                        <svg id="starsImageBackground" version="1.1" xmlns="http://www.w3.org/2000/svg" style="position: absolute; left: -1px; top: 0px; width: 73px; height: 13px; margin-bottom: -2px; opacity: 0.2">
+                            <path style="fill:white;stroke:black;stroke-width:0.5;stroke-linejoin:round" d="M6.18.46 4.12 3.65.44 4.6l2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96Zm15 0-2.06 3.19-3.68.96 2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96zm15 0-2.06 3.19-3.68.96 2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96zm15 0-2.06 3.19-3.68.96 2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96zm15 0-2.06 3.19-3.68.96 2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96z"/>
+                        </span>
+                        <svg id="starsImage" version="1.1" xmlns="http://www.w3.org/2000/svg" style="position: absolute; left: -1px; top: 0px; width: 6px; height: 13px; margin-bottom: -2px;">
+                            <path style="fill:white;stroke:black;stroke-width:0.5;stroke-linejoin:round" d="M6.18.46 4.12 3.65.44 4.6l2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96Zm15 0-2.06 3.19-3.68.96 2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96zm15 0-2.06 3.19-3.68.96 2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96zm15 0-2.06 3.19-3.68.96 2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96zm15 0-2.06 3.19-3.68.96 2.41 2.92-.22 3.78 3.55-1.37 3.54 1.37-.22-3.78 2.41-2.92-3.68-.96z"/>
+                        </span>
+                    </span><br/>
+                    <span id="resultLabel1">Distance 0%</span><br/>
+                    <span id="resultLabel2">H 0% S 0% V 0%</span>
+                </div>
+                <div id="reloadButton" style="position: absolute; width: 60px; height: 60px; bottom: 0px; right: 0px; overflow: hidden; visibility: visible;">
+                    <svg id="reloadImage" version="1.1" xmlns="http://www.w3.org/2000/svg" style="position: absolute; top: 15px; left: 17px;">
+                        <path d="M20.68 24.97A11.38 11.38 0 0 1 1.29 16.9a11.38 11.38 0 1 1 22.73 0m5.27-3.29L24 19.06l-5.3-5.45" style="fill:none;stroke:black;stroke-width:2;stroke-linecap:round"/>
+                        <path d="M20.68 24.97A11.38 11.38 0 0 1 1.29 16.9a11.38 11.38 0 1 1 22.73 0m5.27-3.29L24 19.06l-5.3-5.45" style="fill:none;stroke:white;stroke-width:1;stroke-linecap:round"/>
+                    </svg>
+                </div>
+                <div id="submitButton" style="position: absolute; width: 60px; height: 60px; bottom: 0px; right: 0px; overflow: hidden; visibility: collapse;">
+                    <svg id="submitImage" version="1.1" xmlns="http://www.w3.org/2000/svg" style="position: absolute; top: 15px; left: 17px;">
+                        <path style="display:inline;fill:none;stroke:black;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" d="M26 9.7 12.7 23.1l-6.5-6.6"/>
+                        <path style="display:inline;fill:none;stroke:white;stroke-width:1;stroke-linecap:round;stroke-linejoin:round" d="M26 9.7 12.7 23.1l-6.5-6.6"/>
+                    </svg>
+                </div>
+                <div id="challengeVisibilityButton" style="position: absolute; width: 60px; height: 60px; top: 0px; right: 0px; overflow: hidden;">
+                    <svg id="challengeVisibleImage" version="1.1" xmlns="http://www.w3.org/2000/svg" style="position: absolute; top: 15px; left: 17px; visibility: collapse;">
+                        <path d="M19.26 16.9a5.88 5.85 0 0 1-5.88 5.85A5.88 5.85 0 0 1 7.5 16.9a5.88 5.85 0 0 1 5.88-5.84 5.88 5.85 0 0 1 5.88 5.84zm6.52 0a13.63 13.63 0 0 0-12.4-7.93c-5.34 0-10.19 3.1-12.4 7.93m0 0a13.63 13.63 0 0 0 12.4 7.94c5.34 0 10.2-3.1 12.4-7.94" style="fill:none;stroke:black;stroke-width:2;stroke-linecap:round"/>
+                        <path d="M19.26 16.9a5.88 5.85 0 0 1-5.88 5.85A5.88 5.85 0 0 1 7.5 16.9a5.88 5.85 0 0 1 5.88-5.84 5.88 5.85 0 0 1 5.88 5.84zm6.52 0a13.63 13.63 0 0 0-12.4-7.93c-5.34 0-10.19 3.1-12.4 7.93m0 0a13.63 13.63 0 0 0 12.4 7.94c5.34 0 10.2-3.1 12.4-7.94" style="fill:none;stroke:white;stroke-width:1;stroke-linecap:round"/>
+                    </svg>
+                    <svg id="challengeHiddenImage" version="1.1" xmlns="http://www.w3.org/2000/svg" style="position: absolute; top: 15px; left: 17px; visibility: collapse;">
+                        <path d="M25.78 16.9a13.63 13.55 0 0 1-12.4 7.94A13.63 13.55 0 0 1 .98 16.9" style="fill:none;stroke:black;stroke-width:2;stroke-linecap:round"/>
+                        <path d="M25.78 16.9a13.63 13.55 0 0 1-12.4 7.94A13.63 13.55 0 0 1 .98 16.9" style="fill:none;stroke:white;stroke-width:1;stroke-linecap:round"/>
+                    </svg>
+                </div>
+
+                <div id="fullscreenButton" style="position: absolute; width: 60px; height: 60px; top: 60px; right: 0px; overflow: hidden;">
+                    <svg id="fullscreenEnterImage" version="1.1" xmlns="http://www.w3.org/2000/svg" style="position: absolute; top: 15px; left: 17px;">
+                        <path d="m 2.3,12.9 v -7 h 7 m 8,0 h 7 v 7 m -15,15 h -7 v -7 m 22,0 v 7 h -7" style="fill:none;stroke:black;stroke-width:2;stroke-linecap:round"/>
+                        <path d="m 2.3,12.9 v -7 h 7 m 8,0 h 7 v 7 m -15,15 h -7 v -7 m 22,0 v 7 h -7" style="fill:none;stroke:white;stroke-width:1;stroke-linecap:round"/>
+                    </svg>
+                    <svg id="fullscreenLeaveImage" version="1.1" xmlns="http://www.w3.org/2000/svg" style="position: absolute; top: 15px; left: 17px; visibility: collapse;">
+                        <path d="m 9.3,5.9 v 7 l -7,0 m 22,0 -7,0 V 5.9 M 2.3,20.9 h 7 l 0,7 m 8,0 0,-7 7,0" style="fill:none;stroke:black;stroke-width:2;stroke-linecap:round"/>
+                        <path d="m 9.3,5.9 v 7 l -7,0 m 22,0 -7,0 V 5.9 M 2.3,20.9 h 7 l 0,7 m 8,0 0,-7 7,0" style="fill:none;stroke:white;stroke-width:1;stroke-linecap:round"/>
+                    </svg>
+                </div>
+
+                <select id="challengeButton" style="position: absolute; top: 0px; left: 15px; right: 60px; height: 60px; text-overflow: ellipsis; line-height: 60px;"></select>
+                <select id="depthButton" style="position: absolute; top: 0px; width: 60px; right: 60px; height: 60px; line-height: 60px; text-align: center; margin-right: -20px;">
+                    <optgroup label="Color Depth">
+                        <option value="0">Full</option>
+                        <option value="16">x16</option>
+                        <option value="12">x12</option>
+                        <option value="8">x8</option>
+                        <option value="6">x6</option>
+                        <option value="4">x4</option>
+                        <option value="3">x3</option>
+                        <option value="2">x2</option>
+                    <optgroup>
+                </select>
+            </div>
+            <div id="pickerContainer" style="position: absolute; background: black;">
+                <canvas id="pickerHCanvas" style="position: absolute; width: 100%; height: 100%;"></canvas>
+                <canvas id="pickerSVCanvasSmooth" style="position: absolute; image-rendering: smooth;"></canvas>
+                <canvas id="pickerSVCanvasPixelated" style="position: absolute; image-rendering: pixelated;"></canvas>
+                <canvas id="pickerInputCanvas" style="position: absolute; width: 100%; height: 100%; image-rendering: pixelated; visibility: collapse;"></canvas>
+
+                <div id="targetHCursor1" style="position: absolute; left: 0px; top: 0px; width: 30px; height: 30px; user-select: none; pointer-events: none; overflow: hidden;">
+                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg">
+                       <circle cx="15" cy="15" r="7" style="fill:none; stroke:black; stroke-width:2;" />
+                       <circle cx="15" cy="15" r="7" style="fill:none; stroke:white; stroke-width:1;" />
+                   </svg>
+                </div>
+                <div id="targetSVCursor1" style="position: absolute; left: 40px; top: 40px; width: 30px; height: 30px; user-select: none; pointer-events: none; overflow: hidden;">
+                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg">
+                       <circle cx="15" cy="15" r="7" style="fill:none; stroke:black; stroke-width:2;" />
+                       <circle cx="15" cy="15" r="7" style="fill:none; stroke:white; stroke-width:1;" />
+                   </svg>
+                </div>
+
+                <div id="targetHCursor2" style="position: absolute; left: 0px; top: 0px; width: 30px; height: 30px; user-select: none; pointer-events: none; overflow: hidden;">
+                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg">
+                       <circle cx="15" cy="15" r="7" style="fill:none; stroke:black; stroke-width:2;" />
+                       <circle cx="15" cy="15" r="7" style="fill:none; stroke:white; stroke-width:1;" />
+                   </svg>
+                </div>
+                <div id="targetSVCursor2" style="position: absolute; left: 40px; top: 40px; width: 30px; height: 30px; user-select: none; pointer-events: none; overflow: hidden;">
+                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg">
+                       <circle cx="15" cy="15" r="7" style="fill:none; stroke:black; stroke-width:2;" />
+                       <circle cx="15" cy="15" r="7" style="fill:none; stroke:white; stroke-width:1;" />
+                   </svg>
+                </div>
+
+                <div id="selectionHCursor1" style="position: absolute; left: 0px; top: 0px; width: 30px; height: 30px; user-select: none; pointer-events: none; overflow: hidden;">
+                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg">
+                       <circle cx="15" cy="15" r="12" style="fill:none; stroke:black; stroke-width:2;" />
+                       <circle cx="15" cy="15" r="12" style="fill:none; stroke:white; stroke-width:1;" />
+                   </svg>
+                </div>
+                <div id="selectionSVCursor1" style="position: absolute; left: 40px; top: 40px; width: 30px; height: 30px; user-select: none; pointer-events: none; overflow: hidden;">
+                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg">
+                       <circle cx="15" cy="15" r="12" style="fill:none; stroke:black; stroke-width:2;" />
+                       <circle cx="15" cy="15" r="12" style="fill:none; stroke:white; stroke-width:1;" />
+                   </svg>
+                </div>
+
+                <div id="selectionHCursor2" style="position: absolute; left: 0px; top: 0px; width: 30px; height: 30px; user-select: none; pointer-events: none; overflow: hidden;">
+                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg">
+                       <circle cx="15" cy="15" r="12" style="fill:none; stroke:black; stroke-width:2;" />
+                       <circle cx="15" cy="15" r="12" style="fill:none; stroke:white; stroke-width:1;" />
+                   </svg>
+                </div>
+                <div id="selectionSVCursor2" style="position: absolute; left: 40px; top: 40px; width: 30px; height: 30px; user-select: none; pointer-events: none; overflow: hidden;">
+                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg">
+                       <circle cx="15" cy="15" r="12" style="fill:none; stroke:black; stroke-width:2;" />
+                       <circle cx="15" cy="15" r="12" style="fill:none; stroke:white; stroke-width:1;" />
+                   </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
